@@ -50,21 +50,46 @@
       bottomMarginPercent: 85,
       laneHeightPx: 70,
       showUsernames: true,
-      showStartupTest: true // Sends a test message when OBS loads the source
+      showStartupTest: true
     };
 
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get("session");
     const password = urlParams.get("password") || "false";
+    const useServer = urlParams.has("server") || urlParams.has("wss");
 
-    // Official Social Stream Ninja Custom Template Bridge
-    if (sessionId) {
+    // 1. Official Social Stream Ninja WebRTC Iframe Bridge (with required &solo flag)
+    if (sessionId && !useServer) {
       const iframe = document.createElement("iframe");
-      iframe.style.display = "none";
-      iframe.src = `https://socialstream.ninja{encodeURIComponent(password)}&notmobile&view=${encodeURIComponent(sessionId)}&novideo&noaudio&label=bulletchat&cleanoutput&room=${encodeURIComponent(sessionId)}`;
+      iframe.src = `https://socialstream.ninja{encodeURIComponent(password)}&solo&view=${encodeURIComponent(sessionId)}&novideo&noaudio&label=bulletchat&cleanoutput&room=${encodeURIComponent(sessionId)}`;
+      iframe.style.width = "0px";
+      iframe.style.height = "0px";
+      iframe.style.position = "fixed";
+      iframe.style.left = "-100px";
+      iframe.style.top = "-100px";
+      iframe.style.border = "0";
       document.body.appendChild(iframe);
     }
 
+    // 2. Official Social Stream Ninja WebSocket Bridge (if &server or &wss is in your URL)
+    if (sessionId && useServer) {
+      function connectWS() {
+        const ws = new WebSocket("wss://io.socialstream.ninja");
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ join: sessionId, out: 1, in: 2 }));
+        };
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleIncomingData(data);
+          } catch (err) {}
+        };
+        ws.onclose = () => setTimeout(connectWS, 3000);
+      }
+      connectWS();
+    }
+
+    // 3. Lane & Animation Engine
     const stage = document.getElementById("danmaku-stage");
     const usableTop = (window.innerHeight * CONFIG.topMarginPercent) / 100;
     const usableBottom = (window.innerHeight * CONFIG.bottomMarginPercent) / 100;
@@ -123,14 +148,20 @@
       anim.onfinish = () => msgEl.remove();
     }
 
-    // Listen for Social Stream Ninja WebRTC data events
-    window.addEventListener("message", (e) => {
-      if (!e.data) return;
-      if (e.data.dataReceived && e.data.dataReceived.overlayNinja) {
-        spawnBullet(e.data.dataReceived.overlayNinja);
-      } else if (e.data.overlayNinja) {
-        spawnBullet(e.data.overlayNinja);
+    function handleIncomingData(raw) {
+      if (!raw) return;
+      if (raw.dataReceived && raw.dataReceived.overlayNinja) {
+        spawnBullet(raw.dataReceived.overlayNinja);
+      } else if (raw.overlayNinja) {
+        spawnBullet(raw.overlayNinja);
+      } else if (raw.chatmessage) {
+        spawnBullet(raw);
       }
+    }
+
+    // Listen for WebRTC iframe messages
+    window.addEventListener("message", (e) => {
+      handleIncomingData(e.data);
     });
 
     // Startup visual check
@@ -139,7 +170,7 @@
         spawnBullet({
           chatname: sessionId ? "System" : "Error",
           chatmessage: sessionId
-            ? "Bullet Chat Connected! Waiting for messages..."
+            ? `Connected (${useServer ? "Server Mode" : "P2P Mode"})! Waiting for messages...`
             : "Missing ?session=YOUR_ID in OBS Browser URL!"
         });
       }, 1500);
