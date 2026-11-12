@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Social Stream Ninja - Bullet Chat (2560x1440)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #danmaku-stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .bullet-msg {
+      position: absolute;
+      left: 100vw;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+      font-size: 46px;
+      font-weight: 800;
+      color: #ffffff;
+      text-shadow:
+        -2px -2px 0 #000,
+         2px -2px 0 #000,
+        -2px  2px 0 #000,
+         2px  2px 0 #000,
+         0px  4px 10px rgba(0, 0, 0, 0.9);
+      will-change: transform;
+    }
+    .bullet-name { color: #ffd166; }
+    .bullet-msg img { height: 48px; width: auto; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div id="danmaku-stage"></div>
+
+  <script>
+    const CONFIG = {
+      baseDurationSeconds: 13,
+      topMarginPercent: 4,
+      bottomMarginPercent: 85,
+      laneHeightPx: 70,
+      showUsernames: true,
+      showStartupTest: true // Sends a test message when OBS loads the source
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get("session");
+    const password = urlParams.get("password") || "false";
+
+    // Official Social Stream Ninja Custom Template Bridge
+    if (sessionId) {
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = `https://socialstream.ninja{encodeURIComponent(password)}&notmobile&view=${encodeURIComponent(sessionId)}&novideo&noaudio&label=bulletchat&cleanoutput&room=${encodeURIComponent(sessionId)}`;
+      document.body.appendChild(iframe);
+    }
+
+    const stage = document.getElementById("danmaku-stage");
+    const usableTop = (window.innerHeight * CONFIG.topMarginPercent) / 100;
+    const usableBottom = (window.innerHeight * CONFIG.bottomMarginPercent) / 100;
+    const totalLanes = Math.max(1, Math.floor((usableBottom - usableTop) / CONFIG.laneHeightPx));
+    const laneAvailableAt = new Array(totalLanes).fill(0);
+
+    function getFreeLane() {
+      const now = performance.now();
+      const freeLanes = [];
+      for (let i = 0; i < totalLanes; i++) {
+        if (laneAvailableAt[i] <= now) freeLanes.push(i);
+      }
+      if (freeLanes.length > 0) {
+        return freeLanes[Math.floor(Math.random() * freeLanes.length)];
+      }
+      let earliest = 0;
+      for (let i = 1; i < totalLanes; i++) {
+        if (laneAvailableAt[i] < laneAvailableAt[earliest]) earliest = i;
+      }
+      return earliest;
+    }
+
+    function spawnBullet(data) {
+      if (!data || !data.chatmessage) return;
+
+      const msgEl = document.createElement("div");
+      msgEl.className = "bullet-msg";
+
+      if (CONFIG.showUsernames && data.chatname) {
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "bullet-name";
+        if (data.nameColor) nameSpan.style.color = data.nameColor;
+        nameSpan.textContent = `${data.chatname}:`;
+        msgEl.appendChild(nameSpan);
+      }
+
+      const textSpan = document.createElement("span");
+      textSpan.innerHTML = data.chatmessage;
+      msgEl.appendChild(textSpan);
+
+      const laneIndex = getFreeLane();
+      msgEl.style.top = `${usableTop + laneIndex * CONFIG.laneHeightPx}px`;
+      stage.appendChild(msgEl);
+
+      const msgWidth = msgEl.offsetWidth;
+      const totalDistance = window.innerWidth + msgWidth;
+      const durationMs = CONFIG.baseDurationSeconds * 1000;
+      const pixelsPerMs = totalDistance / durationMs;
+
+      laneAvailableAt[laneIndex] = performance.now() + (msgWidth + 80) / pixelsPerMs;
+
+      const anim = msgEl.animate(
+        [{ transform: "translateX(0px)" }, { transform: `translateX(-${totalDistance}px)` }],
+        { duration: durationMs, easing: "linear" }
+      );
+      anim.onfinish = () => msgEl.remove();
+    }
+
+    // Listen for Social Stream Ninja WebRTC data events
+    window.addEventListener("message", (e) => {
+      if (!e.data) return;
+      if (e.data.dataReceived && e.data.dataReceived.overlayNinja) {
+        spawnBullet(e.data.dataReceived.overlayNinja);
+      } else if (e.data.overlayNinja) {
+        spawnBullet(e.data.overlayNinja);
+      }
+    });
+
+    // Startup visual check
+    if (CONFIG.showStartupTest) {
+      setTimeout(() => {
+        spawnBullet({
+          chatname: sessionId ? "System" : "Error",
+          chatmessage: sessionId
+            ? "Bullet Chat Connected! Waiting for messages..."
+            : "Missing ?session=YOUR_ID in OBS Browser URL!"
+        });
+      }, 1500);
+    }
+  </script>
+</body>
+</html>
