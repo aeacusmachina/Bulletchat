@@ -60,7 +60,7 @@
     // Exact WebRTC connection handshake used by Social Stream Ninja's sampleoverlay.html
     if (roomID) {
       const iframe = document.createElement("iframe");
-      iframe.src = "https://vdo.socialstream.ninja/" + encodeURIComponent(password) + "&push&label=dock&vd=0&ad=0&novideo&noaudio&autostart&cleanoutput&room=" + encodeURIComponent(roomID);
+      iframe.src = "https://vdo.socialstream.ninja/&password=" + encodeURIComponent(password) + "&push&label=dock&vd=0&ad=0&novideo&noaudio&autostart&cleanoutput&room=" + encodeURIComponent(roomID);
       iframe.style.cssText = "width: 0px; height: 0px; position: fixed; left: -100px; top: -100px; border: 0;";
       document.body.appendChild(iframe);
 
