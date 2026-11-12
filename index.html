@@ -2,15 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Social Stream Ninja - Bullet Chat (Danmaku)</title>
+  <title>Social Stream Ninja - Bullet Chat (2560x1440)</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100vw;
       height: 100vh;
@@ -18,89 +12,84 @@
       background: transparent;
       font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-
     #danmaku-stage {
       position: relative;
       width: 100vw;
       height: 100vh;
       overflow: hidden;
     }
-
     .bullet-msg {
       position: absolute;
       left: 100vw;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       white-space: nowrap;
-      font-size: 34px;
+      font-size: 46px;
       font-weight: 800;
       color: #ffffff;
-      /* Crisp dark outline for readability over any game or video */
       text-shadow:
         -2px -2px 0 #000,
          2px -2px 0 #000,
         -2px  2px 0 #000,
          2px  2px 0 #000,
-         0px  3px 8px rgba(0, 0, 0, 0.85);
+         0px  4px 10px rgba(0, 0, 0, 0.9);
       will-change: transform;
-      user-select: none;
     }
-
-    .bullet-name {
-      color: #ffd166; /* Slight gold tint on usernames; change to #ffffff if preferred */
-    }
-
-    .bullet-text {
-      color: #ffffff;
-    }
-
-    /* Emotes and platform icons inside messages */
-    .bullet-msg img {
-      height: 36px;
-      width: auto;
-      vertical-align: middle;
-    }
-
-    /* Hidden iframe that receives live messages from Social Stream Ninja */
-    #ssn-bridge {
-      display: none;
-      width: 0;
-      height: 0;
-      border: 0;
-    }
+    .bullet-name { color: #ffd166; }
+    .bullet-msg img { height: 48px; width: auto; vertical-align: middle; }
   </style>
 </head>
 <body>
   <div id="danmaku-stage"></div>
-  <iframe id="ssn-bridge"></iframe>
 
   <script>
-    // ==========================================
-    // CONFIGURATION (Customize these settings)
-    // ==========================================
     const CONFIG = {
-      baseDurationSeconds: 10, // Base time for a message to cross the screen (lower = faster)
-      topMarginPercent: 4,     // Top screen boundary (%)
-      bottomMarginPercent: 85, // Bottom screen boundary (%) — set to 40 for top-screen only
-      laneHeightPx: 52,        // Vertical spacing between rows
-      showUsernames: true,     // Set to false for pure anonymous danmaku text
-      maxMessageLength: 160    // Truncate extra-long spam messages
+      baseDurationSeconds: 13,
+      topMarginPercent: 4,
+      bottomMarginPercent: 85,
+      laneHeightPx: 70,
+      showUsernames: true,
+      showStartupTest: true
     };
 
-    // 1. Grab the ?session= parameter from the URL
     const urlParams = new URLSearchParams(window.location.search);
-    const sessionId = urlParams.get("session");
+    const roomID = urlParams.get("session");
+    const password = urlParams.get("password") || urlParams.get("pass") || urlParams.get("pw") || "false";
 
-    if (!sessionId) {
-      console.error("Missing ?session=YOUR_SESSION_ID in the URL!");
-    } else {
-      // Connect to Social Stream Ninja's built-in VDO.Ninja / SSN data bridge
-      const bridge = document.getElementById("ssn-bridge");
-      bridge.src = `https://vdo.socialstream.ninja{encodeURIComponent(sessionId)}&cleanoutput&transparent`;
+    // Exact WebRTC connection handshake used by Social Stream Ninja's sampleoverlay.html
+    if (roomID) {
+      const iframe = document.createElement("iframe");
+      iframe.src = "https://socialstream.ninja" + encodeURIComponent(password) + "&push&label=dock&vd=0&ad=0&novideo&noaudio&autostart&cleanoutput&room=" + encodeURIComponent(roomID);
+      iframe.style.cssText = "width: 0px; height: 0px; position: fixed; left: -100px; top: -100px; border: 0;";
+      document.body.appendChild(iframe);
+
+      window.addEventListener("message", function (e) {
+        if (e.source != iframe.contentWindow) return;
+        if (e.data && typeof e.data === "object" && e.data.dataReceived && typeof e.data.dataReceived === "object" && e.data.dataReceived.overlayNinja) {
+          processData(e.data.dataReceived.overlayNinja);
+        }
+      });
     }
 
-    // 2. Smart Lane Manager (prevents messages from colliding)
+    // Optional WebSocket fallback if &server or &server2 is ever added
+    if (roomID && (urlParams.has("server") || urlParams.has("server2"))) {
+      const serverURL = urlParams.get("server") || urlParams.get("server2") || "wss://io.socialstream.ninja";
+      function connectWS() {
+        const ws = new WebSocket(serverURL);
+        ws.onopen = () => ws.send(JSON.stringify({ join: roomID, out: 3, in: 4 }));
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data) processData(data);
+          } catch (err) {}
+        };
+        ws.onclose = () => setTimeout(connectWS, 2000);
+      }
+      connectWS();
+    }
+
+    // Lane & Animation Engine
     const stage = document.getElementById("danmaku-stage");
     const usableTop = (window.innerHeight * CONFIG.topMarginPercent) / 100;
     const usableBottom = (window.innerHeight * CONFIG.bottomMarginPercent) / 100;
@@ -109,34 +98,28 @@
 
     function getFreeLane() {
       const now = performance.now();
-      // Find all lanes that are currently free
       const freeLanes = [];
       for (let i = 0; i < totalLanes; i++) {
-        if (laneAvailableAt[i] <= now) {
-          freeLanes.push(i);
-        }
+        if (laneAvailableAt[i] <= now) freeLanes.push(i);
       }
-      // Pick a random free lane, or fallback to the lane that frees up soonest
       if (freeLanes.length > 0) {
         return freeLanes[Math.floor(Math.random() * freeLanes.length)];
       }
-      let earliestLane = 0;
+      let earliest = 0;
       for (let i = 1; i < totalLanes; i++) {
-        if (laneAvailableAt[i] < laneAvailableAt[earliestLane]) {
-          earliestLane = i;
-        }
+        if (laneAvailableAt[i] < laneAvailableAt[earliest]) earliest = i;
       }
-      return earliestLane;
+      return earliest;
     }
 
-    // 3. Spawn and animate a bullet message
-    function spawnBullet(data) {
-      if (!data || !data.chatmessage) return;
+    function processData(data) {
+      if (!data || typeof data !== "object") return;
+      if (data.content) data = data.content;
+      if (!data.chatmessage && !data.hasDonation) return;
 
       const msgEl = document.createElement("div");
       msgEl.className = "bullet-msg";
 
-      // Optional username
       if (CONFIG.showUsernames && data.chatname) {
         const nameSpan = document.createElement("span");
         nameSpan.className = "bullet-name";
@@ -145,65 +128,38 @@
         msgEl.appendChild(nameSpan);
       }
 
-      // Message text (supports HTML emotes sent by Social Stream Ninja)
       const textSpan = document.createElement("span");
-      textSpan.className = "bullet-text";
-      textSpan.innerHTML = data.chatmessage;
-
-      // Trim overly long plain-text messages
-      if (textSpan.textContent.length > CONFIG.maxMessageLength) {
-        textSpan.textContent = textSpan.textContent.slice(0, CONFIG.maxMessageLength) + "...";
-      }
+      textSpan.innerHTML = data.chatmessage || data.hasDonation;
       msgEl.appendChild(textSpan);
 
-      // Assign vertical lane
       const laneIndex = getFreeLane();
-      const topPx = usableTop + laneIndex * CONFIG.laneHeightPx;
-      msgEl.style.top = `${topPx}px`;
-
+      msgEl.style.top = `${usableTop + laneIndex * CONFIG.laneHeightPx}px`;
       stage.appendChild(msgEl);
 
-      // Calculate width and speed
       const msgWidth = msgEl.offsetWidth;
-      const screenWidth = window.innerWidth;
-      const totalDistance = screenWidth + msgWidth;
-
-      // Slightly faster travel for longer messages so they don't linger
+      const totalDistance = window.innerWidth + msgWidth;
       const durationMs = CONFIG.baseDurationSeconds * 1000;
-
-      // Reserve this lane until the tail of the message has cleared the right edge + buffer
       const pixelsPerMs = totalDistance / durationMs;
-      const timeToClearRightEdge = (msgWidth + 60) / pixelsPerMs;
-      laneAvailableAt[laneIndex] = performance.now() + timeToClearRightEdge;
 
-      // Animate smoothly using Web Animations API
-      const animation = msgEl.animate(
-        [
-          { transform: "translateX(0px)" },
-          { transform: `translateX(-${totalDistance}px)` }
-        ],
-        {
-          duration: durationMs,
-          easing: "linear"
-        }
+      laneAvailableAt[laneIndex] = performance.now() + (msgWidth + 80) / pixelsPerMs;
+
+      const anim = msgEl.animate(
+        [{ transform: "translateX(0px)" }, { transform: `translateX(-${totalDistance}px)` }],
+        { duration: durationMs, easing: "linear" }
       );
-
-      // Clean up DOM node once off-screen
-      animation.onfinish = () => {
-        msgEl.remove();
-      };
+      anim.onfinish = () => msgEl.remove();
     }
 
-    // 4. Listen for incoming messages from the Social Stream Ninja bridge
-    window.addEventListener("message", (event) => {
-      if (!event.data) return;
-      const payload = event.data.dataReceived || event.data;
-      if (payload && payload.overlayNinja) {
-        spawnBullet(payload.overlayNinja);
-      } else if (payload && payload.chatmessage) {
-        spawnBullet(payload);
-      }
-    });
+    if (CONFIG.showStartupTest) {
+      setTimeout(() => {
+        processData({
+          chatname: roomID ? "System" : "Error",
+          chatmessage: roomID
+            ? "Bullet Chat Ready! Send a message in SSN..."
+            : "Missing ?session=YOUR_ID in OBS Browser URL!"
+        });
+      }, 1500);
+    }
   </script>
 </body>
 </html>
